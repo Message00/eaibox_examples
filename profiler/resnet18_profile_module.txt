@@ -1,0 +1,38 @@
+==== Stats ====
+Total nodes: 17 (modules=14, ops=3)
+Total edges: 15
+================
+NodeID	Type	AvgForward(ms)	ParamSize	Desc
+1	Op	0.000	-1	Input
+2	Op	0.000	-1	Input
+3	Module	40.563	9408	Conv2d
+4	Module	1.801	128	BatchNorm2d
+5	Module	10.584	0	ReLU
+6	Module	0.352	0	MaxPool2d
+7	Module	9.729	73984	BasicBlock
+8	Module	0.242	73984	BasicBlock
+9	Module	1.972	230144	BasicBlock
+10	Module	0.172	295424	BasicBlock
+11	Module	1.650	919040	BasicBlock
+12	Module	0.109	1180672	BasicBlock
+13	Module	1.744	3673088	BasicBlock
+14	Module	0.112	4720640	BasicBlock
+15	Module	4.976	0	AdaptiveAvgPool2d
+16	Module	3.156	513000	Linear
+17	Op	0.000	-1	Output
+-- Edges --
+2 -> 3
+3 -> 4
+4 -> 5
+5 -> 6
+6 -> 7
+7 -> 8
+8 -> 9
+9 -> 10
+10 -> 11
+11 -> 12
+12 -> 13
+13 -> 14
+14 -> 15
+15 -> 16
+16 -> 17

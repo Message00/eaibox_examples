@@ -4,7 +4,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-# from utils import fetch1
+
 
 @dataclass
 class ModelArgs:
@@ -114,15 +114,14 @@ class SelfAttention(nn.Module):
         self.wv = nn.Linear(args.dim, self.n_kv_heads * self.head_dim, bias=False)
         self.wo = nn.Linear(args.n_heads * self.head_dim, args.dim, bias=False)
 
-        self.register_buffer('cache_k', torch.zeros((args.max_batch_size, args.max_seq_len, self.n_kv_heads, self.head_dim)), False)
-        self.register_buffer('cache_v', torch.zeros((args.max_batch_size, args.max_seq_len, self.n_kv_heads, self.head_dim)), False)
+        self.cache_k = torch.zeros((args.max_batch_size, args.max_seq_len, self.n_kv_heads, self.head_dim))
+        self.cache_v = torch.zeros((args.max_batch_size, args.max_seq_len, self.n_kv_heads, self.head_dim))
 
     def forward(
         self,
         x: torch.Tensor,
         start_pos: int,
-        freqs_complex: torch.Tensor,
-        batch_size_offset: int,
+        freqs_complex: torch.Tensor
     ):
         batch_size, seq_len, _ = x.shape  # (B, 1, Dim)
 
@@ -146,13 +145,13 @@ class SelfAttention(nn.Module):
         xk = apply_rotary_embeddings(xk, freqs_complex, device=x.device)
 
         # Replace the entry in the cache
-        self.cache_k[batch_size_offset:batch_size+batch_size_offset, start_pos : start_pos + seq_len] = xk
-        self.cache_v[batch_size_offset:batch_size+batch_size_offset, start_pos : start_pos + seq_len] = xv
+        self.cache_k[:batch_size, start_pos : start_pos + seq_len] = xk
+        self.cache_v[:batch_size, start_pos : start_pos + seq_len] = xv
 
         # (B, Seq_Len_KV, H_KV, Head_Dim)
-        keys = self.cache_k[batch_size_offset:batch_size+batch_size_offset, : start_pos + seq_len]
+        keys = self.cache_k[:batch_size, : start_pos + seq_len]
         # (B, Seq_Len_KV, H_KV, Head_Dim)
-        values = self.cache_v[batch_size_offset:batch_size+batch_size_offset, : start_pos + seq_len]
+        values = self.cache_v[:batch_size, : start_pos + seq_len]
 
         # Since every group of Q shares the same K and V heads, just repeat the K and V heads for every Q in the same group.
 
@@ -219,31 +218,22 @@ class EncoderBlock(nn.Module):
         self.dim = args.dim
         self.head_dim = args.dim // args.n_heads
 
-        self.attention = SelfAttention(args)
-        self.feed_forward = FeedForward(args)
-
         # Normalization BEFORE the attention block
         self.attention_norm = RMSNorm(args.dim, eps=args.norm_eps)
+        self.attention = SelfAttention(args)
+
         # Normalization BEFORE the feed forward block
         self.ffn_norm = RMSNorm(args.dim, eps=args.norm_eps)
-    
-    def forward(self, x: torch.Tensor, start_pos: int, freqs_complex: torch.Tensor, batch_size_offset: int,):
+        self.feed_forward = FeedForward(args)
+
+    def forward(self, x: torch.Tensor, start_pos: int, freqs_complex: torch.Tensor):
         # (B, Seq_Len, Dim) + (B, Seq_Len, Dim) --> (B, Seq_Len, Dim)
         h = x + self.attention.forward(
-            self.attention_norm(x), start_pos, freqs_complex, batch_size_offset
+            self.attention_norm(x), start_pos, freqs_complex
         )
         # (B, Seq_Len, Dim) + (B, Seq_Len, Dim) --> (B, Seq_Len, Dim)
         out = h + self.feed_forward.forward(self.ffn_norm(h))
-        return out, start_pos, freqs_complex, batch_size_offset
-    
-class EmbeddingLayer(nn.Module):
-    def __init__(self, vocab_size, dim, n_heads, max_seq_len, device):
-        super(EmbeddingLayer, self).__init__()
-        self.tok_embeddings = nn.Embedding(vocab_size, dim)
-        self.register_buffer('freqs_complex', precompute_theta_pos_frequencies(dim // n_heads, max_seq_len * 2, device=device), False)
-    
-    def forward(self, tokens, start_pos, seq_len, batch_size_offset):
-        return self.tok_embeddings(tokens), start_pos, self.freqs_complex[start_pos:start_pos + seq_len], batch_size_offset
+        return out
     
 class Transformer(nn.Module):
 
@@ -251,12 +241,12 @@ class Transformer(nn.Module):
         super().__init__()
 
         assert args.vocab_size != -1, "Vocab size must be set"
+        torch.set_default_dtype(torch.bfloat16)
 
         self.args = args
         self.vocab_size = args.vocab_size
         self.n_layers = args.n_layers
-        # self.tok_embeddings = nn.Embedding(self.vocab_size, args.dim)
-        self.embedding_layer = EmbeddingLayer(self.vocab_size, args.dim, args.n_heads, args.max_seq_len, args.device)
+        self.tok_embeddings = nn.Embedding(self.vocab_size, args.dim)
 
         self.layers = nn.ModuleList()
         for layer_id in range(args.n_layers):
@@ -265,33 +255,22 @@ class Transformer(nn.Module):
         self.norm = RMSNorm(args.dim, eps=args.norm_eps)
         self.output = nn.Linear(args.dim, self.vocab_size, bias=False)
 
-        # self.freqs_complex = precompute_theta_pos_frequencies(self.args.dim // self.args.n_heads, self.args.max_seq_len * 2, device=self.args.device)
+        self.freqs_complex = precompute_theta_pos_frequencies(self.args.dim // self.args.n_heads, self.args.max_seq_len * 2, device=self.args.device)
 
-    def forward(self, tokens: torch.Tensor, start_pos: int, batch_size_offset: int):
+    def forward(self, tokens: torch.Tensor, start_pos: int):
         # (B, Seq_Len)
         batch_size, seq_len = tokens.shape
         assert seq_len == 1, "Only one token at a time can be processed"
 
-        # # (B, Seq_Len) -> (B, Seq_Len, Dim)
-        # h = self.tok_embeddings(tokens)
+        # (B, Seq_Len) -> (B, Seq_Len, Dim)
+        h = self.tok_embeddings(tokens)
 
-        # # Retrieve the pairs (m, theta) corresponding to the positions [start_pos, start_pos + seq_len]
-        # freqs_complex = self.freqs_complex[start_pos:start_pos + seq_len]
-
-        h, start_pos, freqs_complex, batch_size_offset = self.embedding_layer(tokens, start_pos, seq_len, batch_size_offset)
+        # Retrieve the pairs (m, theta) corresponding to the positions [start_pos, start_pos + seq_len]
+        freqs_complex = self.freqs_complex[start_pos:start_pos + seq_len]
         
         # Consecutively apply all the encoder layers
         for layer in self.layers:
-            h, start_pos, freqs_complex, batch_size_offset = layer(h, start_pos, freqs_complex, batch_size_offset)
+            h = layer(h, start_pos, freqs_complex)
         h = self.norm(h)
         output = self.output(h).float()
         return output
-    
-    # def get_layers(self):
-    #     return [
-    #         self.embedding_layer,
-    #         *self.layers,
-    #         fetch1,
-    #         self.norm,
-    #         self.output
-    #     ]

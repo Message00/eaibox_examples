@@ -1,0 +1,32 @@
+==== Stats ====
+Total nodes: 14 (modules=11, ops=3)
+Total edges: 12
+================
+NodeID	Type	AvgForward(ms)	Backward(ms)	ParamSize	Desc	GPUMemory(MB)
+1	Op	0.000		0.0		-1	Input	0.000
+2	Op	0.000		0.0		-1	Input	0.000
+3	Module	0.249		0.0		262144000	Embedding	500.000
+4	Module	52.868		0.0		855654400	EncoderBlock	1632.031
+5	Module	51.058		0.0		855654400	EncoderBlock	1632.031
+6	Module	51.127		0.0		855654400	EncoderBlock	1632.031
+7	Module	51.139		0.0		855654400	EncoderBlock	1632.031
+8	Module	51.148		0.0		855654400	EncoderBlock	1632.031
+9	Module	51.568		0.0		855654400	EncoderBlock	1632.031
+10	Module	52.331		0.0		855654400	EncoderBlock	1632.031
+11	Module	52.674		0.0		855654400	EncoderBlock	1632.031
+12	Module	0.161		0.0		8192	RMSNorm	0.016
+13	Module	15.945		0.0		262144000	Linear	500.000
+14	Op	0.000		0.0		-1	Output	0.000
+-- Edges --
+2 -> 3
+3 -> 4
+4 -> 5
+5 -> 6
+6 -> 7
+7 -> 8
+8 -> 9
+9 -> 10
+10 -> 11
+11 -> 12
+12 -> 13
+13 -> 14
